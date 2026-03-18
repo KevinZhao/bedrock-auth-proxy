@@ -47,7 +47,6 @@ func envOr(key, def string) string {
 // hop-by-hop headers that must not be forwarded
 var hopByHopHeaders = map[string]bool{
 	"Transfer-Encoding":   true,
-	"Content-Encoding":    true,
 	"Connection":          true,
 	"Keep-Alive":          true,
 	"Proxy-Authenticate":  true,
@@ -60,6 +59,10 @@ var hopByHopHeaders = map[string]bool{
 func copyRequestHeaders(dst, src *http.Request) {
 	for k, vs := range src.Header {
 		if hopByHopHeaders[k] {
+			continue
+		}
+		// Skip AWS SigV4 headers to avoid leaking credentials
+		if k == "Authorization" || strings.HasPrefix(k, "X-Amz-") {
 			continue
 		}
 		for _, v := range vs {
@@ -100,10 +103,12 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	const maxBody = 50 << 20
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 	if err != nil {
+		log.Printf("[#%d] read body error: %v", reqID, err)
 		http.Error(w, `{"error":"read_body_failed"}`, http.StatusBadGateway)
 		return
 	}
 	if len(body) > maxBody {
+		log.Printf("[#%d] body too large: %d bytes", reqID, len(body))
 		http.Error(w, `{"error":"body_too_large"}`, http.StatusRequestEntityTooLarge)
 		return
 	}
@@ -112,13 +117,13 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
+		log.Printf("[#%d] build request error: %v", reqID, err)
 		http.Error(w, `{"error":"build_request_failed"}`, http.StatusBadGateway)
 		return
 	}
 
-	// Forward all request headers, then override auth
+	// Forward request headers, override auth
 	copyRequestHeaders(req, r)
-	req.Header.Set("Host", upstreamURL.Host)
 	req.Header.Set(authHeaderName, authHeaderVal)
 
 	isStreaming := strings.Contains(rawPath, "response-stream")
@@ -141,7 +146,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		preview := string(errBody)
 		if len(preview) > 500 {
-			preview = preview[:500]
+			preview = string([]rune(preview)[:500])
 		}
 		log.Printf("[#%d] <- %d in %.1fs | %s", reqID, resp.StatusCode, time.Since(t0).Seconds(), preview)
 		copyResponseHeaders(w, resp)
@@ -190,6 +195,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
 	json.NewEncoder(w).Encode(map[string]any{
 		"status":          "ok",
 		"requests_served": reqCounter.Load(),
