@@ -22,10 +22,7 @@ var (
 	authHeaderVal  = os.Getenv("AUTH_HEADER_VALUE") // the auth token value
 )
 
-var (
-	reqCounter   atomic.Int64
-	requestCount atomic.Int64
-)
+var reqCounter atomic.Int64
 
 var httpClient = &http.Client{
 	Transport: &http.Transport{
@@ -45,9 +42,15 @@ func envOr(key, def string) string {
 }
 
 var skipHeaders = map[string]bool{
-	"Transfer-Encoding": true,
-	"Content-Encoding":  true,
-	"Connection":        true,
+	"Transfer-Encoding":   true,
+	"Content-Encoding":    true,
+	"Connection":          true,
+	"Keep-Alive":          true,
+	"Proxy-Authenticate":  true,
+	"Proxy-Authorization": true,
+	"Te":                  true,
+	"Trailer":             true,
+	"Upgrade":             true,
 }
 
 func copyResponseHeaders(w http.ResponseWriter, resp *http.Response) {
@@ -63,7 +66,6 @@ func copyResponseHeaders(w http.ResponseWriter, resp *http.Response) {
 
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	reqID := reqCounter.Add(1)
-	requestCount.Add(1)
 
 	rawPath := r.URL.RawPath
 	if rawPath == "" {
@@ -113,7 +115,12 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		errBody, _ := io.ReadAll(resp.Body)
+		errBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("[#%d] error reading upstream error body: %v", reqID, err)
+			http.Error(w, `{"error":"upstream_read_failed"}`, http.StatusBadGateway)
+			return
+		}
 		preview := string(errBody)
 		if len(preview) > 500 {
 			preview = preview[:500]
@@ -150,7 +157,12 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[#%d] error reading upstream body: %v", reqID, err)
+		http.Error(w, `{"error":"upstream_read_failed"}`, http.StatusBadGateway)
+		return
+	}
 	log.Printf("[#%d] <- %d %dB in %.1fs", reqID, resp.StatusCode, len(respBody), time.Since(t0).Seconds())
 	copyResponseHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
@@ -159,7 +171,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok","requests_served":` + fmt.Sprint(requestCount.Load()) + `}`))
+	w.Write([]byte(`{"status":"ok","requests_served":` + fmt.Sprint(reqCounter.Load()) + `}`))
 }
 
 func main() {
@@ -172,7 +184,7 @@ func main() {
 
 	log.Printf("Bedrock Auth Proxy starting on %s", listenAddr)
 	log.Printf("Upstream: %s", upstreamEP)
-	log.Printf("Auth header: %s", authHeaderName)
+	log.Printf("Auth header: [configured]")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
@@ -199,5 +211,5 @@ func main() {
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("Server failed: %v", err)
 	}
-	log.Printf("Server stopped. Served %d requests.", requestCount.Load())
+	log.Printf("Server stopped. Served %d requests.", reqCounter.Load())
 }
