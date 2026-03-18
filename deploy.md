@@ -24,8 +24,7 @@ vi ~/.claude/settings.json
 | 占位符 | 替换为 |
 |-------|--------|
 | `https://your-gateway.example.com/api/bedrock_runtime` | 你的 LLM Gateway 地址 |
-| `token` | 认证 header 名称 |
-| `your-auth-token` | 认证 header 值 |
+| `your-auth-token` | 认证 token 值 |
 
 如需自动启动 proxy，取消 hooks 部分的注释并确认 `command` 路径指向 `~/bedrock-auth-proxy/start.sh`。
 
