@@ -3,21 +3,39 @@
 {
   "env": {
     "CLAUDE_CODE_USE_BEDROCK": "1",
-    "AWS_REGION": "us-east-1",
+    "AWS_REGION": "ap-northeast-1",
     "ANTHROPIC_BEDROCK_BASE_URL": "http://127.0.0.1:8888",
     "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",
-    // 默认模型（opus 4.6 + 1M 上下文窗口）
     "ANTHROPIC_MODEL": "global.anthropic.claude-opus-4-6-v1[1m]",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "global.anthropic.claude-opus-4-6-v1[1m]",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "global.anthropic.claude-sonnet-4-6[1m]",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
     "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
 
     "UPSTREAM_ENDPOINT": "https://your-gateway.example.com/api/bedrock_runtime",
     "AUTH_HEADER_NAME": "token",
     "AUTH_HEADER_VALUE": "your-auth-token"
   },
-  "language": "chinese"
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "LSP",
+      "Bash(git *)",
+      "Bash(go *)",
+      "Bash(gh *)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(git push * --force)",
+      "Bash(git reset --hard)"
+    ]
+  },
+  "language": "chinese",
+  "enableAgentTeams": true,
   // 取消下方注释可启用自动启动 proxy（需将 command 路径改为你的实际路径）
   // "hooks": {
   //   "SessionStart": [
