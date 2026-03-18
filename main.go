@@ -3,10 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -34,6 +35,8 @@ var httpClient = &http.Client{
 	},
 }
 
+var upstreamURL *url.URL
+
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -41,7 +44,8 @@ func envOr(key, def string) string {
 	return def
 }
 
-var skipHeaders = map[string]bool{
+// hop-by-hop headers that must not be forwarded
+var hopByHopHeaders = map[string]bool{
 	"Transfer-Encoding":   true,
 	"Content-Encoding":    true,
 	"Connection":          true,
@@ -53,9 +57,20 @@ var skipHeaders = map[string]bool{
 	"Upgrade":             true,
 }
 
+func copyRequestHeaders(dst, src *http.Request) {
+	for k, vs := range src.Header {
+		if hopByHopHeaders[k] {
+			continue
+		}
+		for _, v := range vs {
+			dst.Header.Add(k, v)
+		}
+	}
+}
+
 func copyResponseHeaders(w http.ResponseWriter, resp *http.Response) {
 	for k, vs := range resp.Header {
-		if skipHeaders[k] {
+		if hopByHopHeaders[k] {
 			continue
 		}
 		for _, v := range vs {
@@ -64,18 +79,23 @@ func copyResponseHeaders(w http.ResponseWriter, resp *http.Response) {
 	}
 }
 
+func buildTargetURL(rawPath, rawQuery string) string {
+	t := *upstreamURL
+	t.Path = strings.TrimRight(t.Path, "/") + rawPath
+	t.RawQuery = rawQuery
+	return t.String()
+}
+
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	reqID := reqCounter.Add(1)
+	defer r.Body.Close()
 
 	rawPath := r.URL.RawPath
 	if rawPath == "" {
 		rawPath = r.URL.Path
 	}
 
-	targetURL := strings.TrimRight(upstreamEP, "/") + rawPath
-	if q := r.URL.RawQuery; q != "" {
-		targetURL += "?" + q
-	}
+	targetURL := buildTargetURL(rawPath, r.URL.RawQuery)
 
 	const maxBody = 50 << 20
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
@@ -96,11 +116,9 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ct := r.Header.Get("Content-Type")
-	if ct == "" {
-		ct = "application/json"
-	}
-	req.Header.Set("Content-Type", ct)
+	// Forward all request headers, then override auth
+	copyRequestHeaders(req, r)
+	req.Header.Set("Host", upstreamURL.Host)
 	req.Header.Set(authHeaderName, authHeaderVal)
 
 	isStreaming := strings.Contains(rawPath, "response-stream")
@@ -142,6 +160,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
 				if _, werr := w.Write(buf[:n]); werr != nil {
+					log.Printf("[#%d] downstream write error: %v", reqID, werr)
 					break
 				}
 				if canFlush {
@@ -171,7 +190,10 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"ok","requests_served":` + fmt.Sprint(reqCounter.Load()) + `}`))
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":          "ok",
+		"requests_served": reqCounter.Load(),
+	})
 }
 
 func main() {
@@ -182,8 +204,14 @@ func main() {
 		log.Fatal("AUTH_HEADER_NAME and AUTH_HEADER_VALUE are required")
 	}
 
+	var err error
+	upstreamURL, err = url.Parse(upstreamEP)
+	if err != nil || upstreamURL.Host == "" {
+		log.Fatalf("Invalid UPSTREAM_ENDPOINT: %s", upstreamEP)
+	}
+
 	log.Printf("Bedrock Auth Proxy starting on %s", listenAddr)
-	log.Printf("Upstream: %s", upstreamEP)
+	log.Printf("Upstream: %s", upstreamURL.Host)
 	log.Printf("Auth header: [configured]")
 
 	mux := http.NewServeMux()
@@ -205,7 +233,9 @@ func main() {
 		log.Printf("Received %v, shutting down...", sig)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("Shutdown error: %v", err)
+		}
 	}()
 
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
