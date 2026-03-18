@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build binaries
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+
+          GOOS=linux   GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/bedrock-auth-proxy-linux-amd64 .
+          GOOS=linux   GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/bedrock-auth-proxy-linux-arm64 .
+          GOOS=darwin  GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/bedrock-auth-proxy-darwin-amd64 .
+          GOOS=darwin  GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/bedrock-auth-proxy-darwin-arm64 .
+          GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/bedrock-auth-proxy-windows-amd64.exe .
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
