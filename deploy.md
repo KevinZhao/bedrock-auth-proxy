@@ -2,25 +2,23 @@
 
 3 步完成部署，无需 Go 环境，无需手动下载二进制。
 
-## 1. 下载脚本
+## 1. 克隆仓库
 
 ```bash
-mkdir -p ~/bedrock-auth-proxy && cd ~/bedrock-auth-proxy
-curl -fSLO https://raw.githubusercontent.com/KevinZhao/bedrock-auth-proxy/main/start.sh
-curl -fSLO https://raw.githubusercontent.com/KevinZhao/bedrock-auth-proxy/main/stop.sh
-chmod +x start.sh stop.sh
+git clone https://github.com/KevinZhao/bedrock-auth-proxy.git ~/bedrock-auth-proxy
+cd ~/bedrock-auth-proxy
 ```
 
-首次启动时 `start.sh` 会自动检测平台并下载对应的二进制文件到当前目录。
+首次启动时 `start.sh` 会自动检测平台并下载对应的二进制文件到仓库目录。
 
 ## 2. 配置 Claude Code
 
-将配置模板下载到 `~/.claude/settings.json`，然后替换以下 3 个值：
+复制配置模板到 `~/.claude/settings.json`，然后编辑替换占位符：
 
 ```bash
 mkdir -p ~/.claude
-curl -fSL https://raw.githubusercontent.com/KevinZhao/bedrock-auth-proxy/main/settings.json.example \
-  -o ~/.claude/settings.json
+cp settings.json.example ~/.claude/settings.json
+vi ~/.claude/settings.json
 ```
 
 | 占位符 | 替换为 |
@@ -29,14 +27,7 @@ curl -fSL https://raw.githubusercontent.com/KevinZhao/bedrock-auth-proxy/main/se
 | `token` | 认证 header 名称 |
 | `your-auth-token` | 认证 header 值 |
 
-快速复制：
-
-```bash
-# 然后编辑 ~/.claude/settings.json 替换占位符
-vi ~/.claude/settings.json
-```
-
-如需自动启动 proxy，编辑 `~/.claude/settings.json`，取消 hooks 部分的注释并确认 `command` 路径正确。
+如需自动启动 proxy，取消 hooks 部分的注释并确认 `command` 路径指向 `~/bedrock-auth-proxy/start.sh`。
 
 ## 3. 启动
 
