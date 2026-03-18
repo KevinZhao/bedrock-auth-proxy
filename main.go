@@ -2,15 +2,12 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -158,25 +155,5 @@ func main() {
 	}
 
 	log.Printf("Bedrock Auth Proxy on %s -> %s", listenAddr, upstreamURL.Host)
-
-	srv := &http.Server{
-		Addr:           listenAddr,
-		Handler:        http.HandlerFunc(proxyHandler),
-		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   0,
-		MaxHeaderBytes: 1 << 20,
-	}
-
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		srv.Shutdown(ctx)
-	}()
-
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatalf("Server failed: %v", err)
-	}
+	log.Fatal(http.ListenAndServe(listenAddr, http.HandlerFunc(proxyHandler)))
 }
