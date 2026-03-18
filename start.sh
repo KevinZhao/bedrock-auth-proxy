@@ -7,9 +7,19 @@ if [ -f proxy.pid ] && kill -0 "$(cat proxy.pid)" 2>/dev/null; then
 fi
 
 if [ ! -f bedrock-auth-proxy ]; then
-    echo "ERROR: bedrock-auth-proxy binary not found. Download from:"
-    echo "  https://github.com/KevinZhao/bedrock-auth-proxy/releases"
-    exit 1
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64)  ARCH="amd64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
+        *) echo "ERROR: Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+    SUFFIX=""
+    [ "$OS" = "windows" ] && SUFFIX=".exe"
+    URL="https://github.com/KevinZhao/bedrock-auth-proxy/releases/latest/download/bedrock-auth-proxy-${OS}-${ARCH}${SUFFIX}"
+    echo "Downloading bedrock-auth-proxy from ${URL}..."
+    curl -fSL -o bedrock-auth-proxy "$URL"
+    chmod +x bedrock-auth-proxy
 fi
 
 ./bedrock-auth-proxy >> proxy.log 2>&1 &

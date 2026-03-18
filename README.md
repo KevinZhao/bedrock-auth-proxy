@@ -29,66 +29,37 @@ Claude Code (Bedrock 模式)
 
 Proxy 做的事情非常简单：**接收请求 → 注入认证 header → 转发到网关**。不修改请求体，不做协议转换，159 行 Go 代码，约 5.6MB 二进制。
 
-## 安装
+## 快速开始
 
-从 [Releases](https://github.com/KevinZhao/bedrock-auth-proxy/releases) 下载对应平台的二进制文件：
+> 详细步骤见 [deploy.md](deploy.md)
 
 ```bash
-# Linux x86_64
-curl -Lo bedrock-auth-proxy https://github.com/KevinZhao/bedrock-auth-proxy/releases/latest/download/bedrock-auth-proxy-linux-amd64
+# 1. 下载启动脚本（二进制会在首次启动时自动下载）
+mkdir -p ~/bedrock-auth-proxy && cd ~/bedrock-auth-proxy
+curl -fSLO https://raw.githubusercontent.com/KevinZhao/bedrock-auth-proxy/main/start.sh
+curl -fSLO https://raw.githubusercontent.com/KevinZhao/bedrock-auth-proxy/main/stop.sh
+chmod +x start.sh stop.sh
 
-# Linux ARM64
-curl -Lo bedrock-auth-proxy https://github.com/KevinZhao/bedrock-auth-proxy/releases/latest/download/bedrock-auth-proxy-linux-arm64
+# 2. 下载配置模板并编辑（替换 gateway 地址和 auth token，取消 hooks 注释以启用自动启动）
+mkdir -p ~/.claude
+curl -fSL https://raw.githubusercontent.com/KevinZhao/bedrock-auth-proxy/main/settings.json.example \
+  -o ~/.claude/settings.json
 
-# macOS Apple Silicon
-curl -Lo bedrock-auth-proxy https://github.com/KevinZhao/bedrock-auth-proxy/releases/latest/download/bedrock-auth-proxy-darwin-arm64
-
-# macOS Intel
-curl -Lo bedrock-auth-proxy https://github.com/KevinZhao/bedrock-auth-proxy/releases/latest/download/bedrock-auth-proxy-darwin-amd64
-
-# Windows
-curl -Lo bedrock-auth-proxy.exe https://github.com/KevinZhao/bedrock-auth-proxy/releases/latest/download/bedrock-auth-proxy-windows-amd64.exe
-
-chmod +x bedrock-auth-proxy
+# 3. 启动 Claude Code
+claude
 ```
 
-## 配置
+## 配置说明
 
-### 第 1 步：配置 `~/.claude/settings.json`
+完整配置参考 [settings.json.example](settings.json.example)，需替换以下 3 个值：
 
-将 proxy 二进制和 `start.sh` 放在同一目录（如 `~/bedrock-auth-proxy/`），编辑 `~/.claude/settings.json`，一站式完成 Claude Code 和 Proxy 的配置：
+| 占位符 | 替换为 |
+|-------|--------|
+| `https://your-gateway.example.com/api/bedrock_runtime` | 你的 LLM Gateway 地址 |
+| `token` | 认证 header 名称 |
+| `your-auth-token` | 认证 header 值 |
 
-```jsonc
-{
-  "env": {
-    // Claude Code 配置
-    "CLAUDE_CODE_USE_BEDROCK": "1",
-    "ANTHROPIC_BEDROCK_BASE_URL": "http://127.0.0.1:8888",
-    "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",
-    "AWS_REGION": "us-east-1",
-    "ANTHROPIC_MODEL": "global.anthropic.claude-opus-4-6-v1[1m]",
-
-    // Proxy 配置（start.sh 会继承这些环境变量）
-    "UPSTREAM_ENDPOINT": "https://your-gateway.example.com/api/bedrock_runtime",
-    "AUTH_HEADER_NAME": "token",
-    "AUTH_HEADER_VALUE": "your-auth-token"
-  },
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/bedrock-auth-proxy/start.sh",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+所有环境变量：
 
 | 环境变量 | 必填 | 说明 |
 |---------|------|------|
@@ -98,15 +69,7 @@ chmod +x bedrock-auth-proxy
 | `PROXY_PORT` | 否 | 监听端口，默认 `8888` |
 | `LISTEN_HOST` | 否 | 监听地址，默认 `127.0.0.1` |
 
-配置完成后，每次启动 `claude` 会通过 `SessionStart` hook 自动拉起 proxy，无需手动操作。
-
-### 第 2 步：验证
-
-```bash
-claude
-```
-
-启动后 proxy 会自动运行，日志中可看到 `Bedrock Auth Proxy on 127.0.0.1:8888`。
+> 详细部署步骤、验证和排错见 [deploy.md](deploy.md)
 
 ## 手动启停
 

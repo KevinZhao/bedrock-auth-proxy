@@ -109,6 +109,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		log.Printf("upstream error: %s %s -> %v", r.Method, rawPath, err)
 		http.Error(w, `{"error":"upstream_error"}`, http.StatusBadGateway)
 		return
 	}
@@ -116,6 +117,10 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	copyResponseHeaders(w, resp)
 	w.WriteHeader(resp.StatusCode)
+
+	if resp.StatusCode >= 400 {
+		log.Printf("upstream %d: %s %s", resp.StatusCode, r.Method, rawPath)
+	}
 
 	if strings.Contains(rawPath, "response-stream") {
 		flusher, canFlush := w.(http.Flusher)
