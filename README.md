@@ -54,60 +54,19 @@ chmod +x bedrock-auth-proxy
 
 ## 配置
 
-### 第 1 步：启动 Proxy
+### 第 1 步：配置 `~/.claude/settings.json`
 
-```bash
-UPSTREAM_ENDPOINT="https://your-gateway.example.com/api/bedrock_runtime" \
-AUTH_HEADER_NAME="token" \
-AUTH_HEADER_VALUE="your-auth-token" \
-./bedrock-auth-proxy
-```
-
-| 环境变量 | 必填 | 说明 |
-|---------|------|------|
-| `UPSTREAM_ENDPOINT` | 是 | LLM Gateway 的 Bedrock API 地址 |
-| `AUTH_HEADER_NAME` | 是 | 认证 header 名称（如 `token`） |
-| `AUTH_HEADER_VALUE` | 是 | 认证 header 值 |
-| `PROXY_PORT` | 否 | 监听端口，默认 `8888` |
-| `LISTEN_HOST` | 否 | 监听地址，默认 `127.0.0.1` |
-
-### 第 2 步：配置 Claude Code
-
-编辑 `~/.claude/settings.json`：
+将 proxy 二进制和 `start.sh` 放在同一目录（如 `~/bedrock-auth-proxy/`），编辑 `~/.claude/settings.json`，一站式完成 Claude Code 和 Proxy 的配置：
 
 ```jsonc
 {
   "env": {
-    // 启用 Bedrock 模式
-    "CLAUDE_CODE_USE_BEDROCK": "1",
-
-    // 指向本地 proxy
-    "ANTHROPIC_BEDROCK_BASE_URL": "http://127.0.0.1:8888",
-
-    // 跳过 CC 侧的 SigV4 签名（proxy 处理认证）
-    "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",
-
-    // Bedrock 区域（按网关要求设置）
-    "AWS_REGION": "us-east-1",
-
-    // 模型配置
-    "ANTHROPIC_MODEL": "global.anthropic.claude-sonnet-4-6-v1[1m]"
-  }
-}
-```
-
-### 第 3 步（推荐）：自动启动 Proxy
-
-将 proxy 二进制和 `start.sh` 放在同一目录（如 `~/bedrock-auth-proxy/`），在 `~/.claude/settings.json` 中添加 hook：
-
-```jsonc
-{
-  "env": {
+    // Claude Code 配置
     "CLAUDE_CODE_USE_BEDROCK": "1",
     "ANTHROPIC_BEDROCK_BASE_URL": "http://127.0.0.1:8888",
     "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",
     "AWS_REGION": "us-east-1",
-    "ANTHROPIC_MODEL": "global.anthropic.claude-sonnet-4-6-v1[1m]",
+    "ANTHROPIC_MODEL": "global.anthropic.claude-opus-4-6-v1[1m]",
 
     // Proxy 配置（start.sh 会继承这些环境变量）
     "UPSTREAM_ENDPOINT": "https://your-gateway.example.com/api/bedrock_runtime",
@@ -131,7 +90,23 @@ AUTH_HEADER_VALUE="your-auth-token" \
 }
 ```
 
-这样每次启动 `claude` 会自动拉起 proxy，无需手动操作。
+| 环境变量 | 必填 | 说明 |
+|---------|------|------|
+| `UPSTREAM_ENDPOINT` | 是 | LLM Gateway 的 Bedrock API 地址 |
+| `AUTH_HEADER_NAME` | 是 | 认证 header 名称（如 `token`） |
+| `AUTH_HEADER_VALUE` | 是 | 认证 header 值 |
+| `PROXY_PORT` | 否 | 监听端口，默认 `8888` |
+| `LISTEN_HOST` | 否 | 监听地址，默认 `127.0.0.1` |
+
+配置完成后，每次启动 `claude` 会通过 `SessionStart` hook 自动拉起 proxy，无需手动操作。
+
+### 第 2 步：验证
+
+```bash
+claude
+```
+
+启动后 proxy 会自动运行，日志中可看到 `Bedrock Auth Proxy on 127.0.0.1:8888`。
 
 ## 手动启停
 
