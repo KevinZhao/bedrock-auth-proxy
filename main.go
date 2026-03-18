@@ -84,7 +84,9 @@ func copyResponseHeaders(w http.ResponseWriter, resp *http.Response) {
 
 func buildTargetURL(rawPath, rawQuery string) string {
 	t := *upstreamURL
-	t.Path = strings.TrimRight(t.Path, "/") + rawPath
+	basePath := strings.TrimRight(t.Path, "/")
+	t.RawPath = basePath + rawPath
+	t.Path, _ = url.PathUnescape(t.RawPath)
 	t.RawQuery = rawQuery
 	return t.String()
 }
@@ -145,8 +147,9 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		preview := string(errBody)
-		if len(preview) > 500 {
-			preview = string([]rune(preview)[:500])
+		runes := []rune(preview)
+		if len(runes) > 500 {
+			preview = string(runes[:500])
 		}
 		log.Printf("[#%d] <- %d in %.1fs | %s", reqID, resp.StatusCode, time.Since(t0).Seconds(), preview)
 		copyResponseHeaders(w, resp)
