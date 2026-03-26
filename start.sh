@@ -1,9 +1,41 @@
 #!/bin/bash
 set -e
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Load ALL env vars from ~/.claude/settings.json "env" section
+_load_from_settings() {
+    local settings="$HOME/.claude/settings.json"
+    [ -f "$settings" ] || return 0
+    # Strip JSONC comments, find "KEY": "VALUE" pairs inside env block
+    local in_env=0
+    while IFS= read -r line; do
+        # Strip // comments
+        line="${line%%//*}"
+        if echo "$line" | grep -q '"env"'; then
+            in_env=1; continue
+        fi
+        if [ "$in_env" = 1 ] && echo "$line" | grep -q '^[[:space:]]*}'; then
+            break
+        fi
+        if [ "$in_env" = 1 ]; then
+            local key val
+            key=$(echo "$line" | sed -n 's/.*"\([^"]*\)"[[:space:]]*:.*/\1/p')
+            val=$(echo "$line" | sed -n 's/.*:[[:space:]]*"\(.*\)".*/\1/p')
+            if [ -n "$key" ] && [ -n "$val" ]; then
+                # Don't override existing env vars
+                if [ -z "${!key}" ]; then
+                    export "$key=$val"
+                fi
+            fi
+        fi
+    done < "$settings"
+}
+_load_from_settings
 
 if [ -f proxy.pid ] && kill -0 "$(cat proxy.pid)" 2>/dev/null; then
-    exit 0
+    echo "Proxy already running (PID: $(cat proxy.pid))"
+    return 0 2>/dev/null || exit 0
 fi
 
 if [ ! -f bedrock-auth-proxy ]; then
@@ -12,7 +44,7 @@ if [ ! -f bedrock-auth-proxy ]; then
     case "$ARCH" in
         x86_64)  ARCH="amd64" ;;
         aarch64|arm64) ARCH="arm64" ;;
-        *) echo "ERROR: Unsupported architecture: $ARCH"; exit 1 ;;
+        *) echo "ERROR: Unsupported architecture: $ARCH"; return 1 2>/dev/null || exit 1 ;;
     esac
     SUFFIX=""
     [ "$OS" = "windows" ] && SUFFIX=".exe"
@@ -27,7 +59,8 @@ echo $! > proxy.pid
 
 for i in $(seq 1 20); do
     if curl -sf http://127.0.0.1:${PROXY_PORT:-8888}/ > /dev/null 2>&1; then
-        exit 0
+        echo "Proxy started (PID: $(cat proxy.pid))"
+        return 0 2>/dev/null || exit 0
     fi
     sleep 0.25
 done
@@ -35,4 +68,4 @@ done
 echo "ERROR: Proxy failed to start. Check proxy.log"
 kill "$(cat proxy.pid)" 2>/dev/null || true
 rm -f proxy.pid
-exit 1
+return 1 2>/dev/null || exit 1
