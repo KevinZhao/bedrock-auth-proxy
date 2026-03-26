@@ -53,6 +53,23 @@ claude
 
 首次启动 Claude Code 时选择 **Bedrock** 认证即可。
 
+## 验证
+
+在 Claude Code 中输入任意问题，能正常回复即部署成功。
+
+如遇问题，检查 proxy 日志（设置 `DEBUG=1` 环境变量可开启详细日志）：
+
+```bash
+cat ~/bedrock-auth-proxy/proxy.log
+```
+
+日志中会显示完整的请求生命周期：
+- `>>> POST /model/.../invoke` — 收到的请求
+- `rewrite path: ... → ...` — URL 路径改写（去除 model ID）
+- `target: https://...` — 实际转发的目标 URL
+- `<<< 200 ... (xxxms)` — upstream 响应状态和耗时
+- `upstream 4xx/5xx` — 错误响应及 body 内容
+
 ## 自动启动 Proxy（推荐）
 
 在 `~/.claude/settings.json` 中添加 SessionStart hook，每次打开 Claude Code 时自动启动 proxy：
@@ -80,23 +97,6 @@ claude
 将上面的 `hooks` 块合并到你的 settings.json 中（与 `env`、`permissions` 同级）。
 
 > **注意：** 此方式依赖公司内网访问 LLM Gateway。离开公司网络（如断开 VPN）后 Claude Code 将无法正常使用。
-
-## 验证
-
-在 Claude Code 中输入任意问题，能正常回复即部署成功。
-
-如遇问题，检查 proxy 日志（设置 `DEBUG=1` 环境变量可开启详细日志）：
-
-```bash
-cat ~/bedrock-auth-proxy/proxy.log
-```
-
-日志中会显示完整的请求生命周期：
-- `>>> POST /model/.../invoke` — 收到的请求
-- `rewrite path: ... → ...` — URL 路径改写（去除 model ID）
-- `target: https://...` — 实际转发的目标 URL
-- `<<< 200 ... (xxxms)` — upstream 响应状态和耗时
-- `upstream 4xx/5xx` — 错误响应及 body 内容
 
 ## 配置说明
 
