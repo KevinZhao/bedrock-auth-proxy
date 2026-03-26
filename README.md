@@ -57,7 +57,7 @@ claude
 
 在 Claude Code 中输入任意问题，能正常回复即部署成功。
 
-如遇问题，检查 proxy 日志（设置 `DEBUG=1` 环境变量可开启详细日志）：
+如遇问题，在 settings.json 的 `env` 中添加 `"DEBUG": "1"` 可开启详细日志：
 
 ```bash
 cat ~/bedrock-auth-proxy/proxy.log
