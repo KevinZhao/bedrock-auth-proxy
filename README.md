@@ -70,6 +70,24 @@ cat ~/bedrock-auth-proxy/proxy.log
 - `<<< 200 ... (xxxms)` — upstream 响应状态和耗时
 - `upstream 4xx/5xx` — 错误响应及 body 内容
 
+## 启停命令
+
+```bash
+# 启动（推荐 source 方式）
+source ~/bedrock-auth-proxy/start.sh
+
+# 停止
+~/bedrock-auth-proxy/stop.sh
+
+# 查看日志
+tail -f ~/bedrock-auth-proxy/proxy.log
+
+# 重启（更新二进制后）
+~/bedrock-auth-proxy/stop.sh
+rm -f ~/bedrock-auth-proxy/bedrock-auth-proxy
+source ~/bedrock-auth-proxy/start.sh
+```
+
 ## 自动启动 Proxy（推荐）
 
 在 `~/.claude/settings.json` 中添加 SessionStart hook，每次打开 Claude Code 时自动启动 proxy：
@@ -97,39 +115,6 @@ cat ~/bedrock-auth-proxy/proxy.log
 将上面的 `hooks` 块合并到你的 settings.json 中（与 `env`、`permissions` 同级）。
 
 > **注意：** 此方式依赖公司内网访问 LLM Gateway。离开公司网络（如断开 VPN）后 Claude Code 将无法正常使用。
-
-## 配置说明
-
-完整配置参考 [settings.json.example](settings.json.example)。
-
-所有环境变量：
-
-| 环境变量 | 必填 | 说明 |
-|---------|------|------|
-| `UPSTREAM_ENDPOINT` | 是 | LLM Gateway 的 Bedrock API 地址 |
-| `AUTH_HEADER_NAME` | 是 | 认证 header 名称（如 `token`） |
-| `AUTH_HEADER_VALUE` | 是 | 认证 header 值 |
-| `PROXY_PORT` | 否 | 监听端口，默认 `8888` |
-| `LISTEN_HOST` | 否 | 监听地址，默认 `127.0.0.1` |
-| `DEBUG` | 否 | 设为 `1` 开启详细调试日志 |
-
-## 启停命令
-
-```bash
-# 启动（推荐 source 方式）
-source ~/bedrock-auth-proxy/start.sh
-
-# 停止
-~/bedrock-auth-proxy/stop.sh
-
-# 查看日志
-tail -f ~/bedrock-auth-proxy/proxy.log
-
-# 重启（更新二进制后）
-~/bedrock-auth-proxy/stop.sh
-rm -f ~/bedrock-auth-proxy/bedrock-auth-proxy
-source ~/bedrock-auth-proxy/start.sh
-```
 
 ## 常见问题
 
