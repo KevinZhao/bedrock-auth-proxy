@@ -4,29 +4,10 @@
 
 ## 为什么需要这个 Proxy
 
-Claude Code 连接后端有两种模式，但都无法直连使用自定义 header 认证的 Bedrock 网关：
-
-| CC 模式 | 请求格式 | 自定义 Auth Header | 结论 |
-|---------|---------|-------------------|------|
-| Anthropic API | `/v1/messages` | 支持 | 网关只接受 Bedrock 格式，格式不匹配 |
-| Bedrock | `/model/xxx/invoke` | 不支持（AWS SDK 强制 SigV4） | 无法传递网关认证 |
-
-**两种模式各缺一半** — 一个格式对但没法加自定义 header，一个能加 header 但格式不对。
+Claude Code Bedrock 模式使用 AWS SigV4 签名，无法传递自定义认证 header 给网关。本 Proxy 作为桥梁：丢弃 SigV4 签名 → 去除 URL 中的 model ID → 注入自定义 auth header → 转发到网关。
 
 ```
-Claude Code (Bedrock 模式)
-      |
-      | POST /model/claude-opus-4-6/invoke
-      v
-  bedrock-auth-proxy (127.0.0.1:8888)
-      | 1. 去除 URL 中的 model ID: /model/invoke
-      | 2. 丢弃 SigV4 签名（Authorization + X-Amz-* headers）
-      | 3. 注入自定义认证 header（如 token: xxx）
-      v
-  LLM Gateway (如 Runway)
-      | token 决定路由到哪个模型
-      v
-  AWS Bedrock
+Claude Code → bedrock-auth-proxy (localhost:8888) → LLM Gateway (Runway) → Bedrock
 ```
 
 ## 前置条件
