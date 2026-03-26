@@ -97,6 +97,23 @@ func copyResponseHeaders(w http.ResponseWriter, resp *http.Response) {
 	}
 }
 
+// rewritePath strips the model ID from Bedrock-style paths.
+// /model/{model-id}/invoke → /model/invoke
+// /model/{model-id}/invoke-with-response-stream → /model/invoke-with-response-stream
+func rewritePath(rawPath string) string {
+	if !strings.HasPrefix(rawPath, "/model/") {
+		return rawPath
+	}
+	rest := rawPath[len("/model/"):] // "claude-opus-4-6/invoke-with-response-stream"
+	idx := strings.Index(rest, "/")
+	if idx < 0 {
+		return rawPath
+	}
+	rewritten := "/model" + rest[idx:]
+	debugLog("rewrite path: %s → %s", rawPath, rewritten)
+	return rewritten
+}
+
 func buildTargetURL(rawPath, rawQuery string) string {
 	t := *upstreamURL
 	basePath := strings.TrimRight(t.Path, "/")
@@ -114,6 +131,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	if rawPath == "" {
 		rawPath = r.URL.Path
 	}
+	rawPath = rewritePath(rawPath)
 
 	debugLog(">>> %s %s (content-length: %d)", r.Method, rawPath, r.ContentLength)
 	if debug {
