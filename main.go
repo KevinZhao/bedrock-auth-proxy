@@ -16,6 +16,7 @@ var (
 	upstreamEP     = os.Getenv("UPSTREAM_ENDPOINT")
 	authHeaderName = os.Getenv("AUTH_HEADER_NAME")
 	authHeaderVal  = os.Getenv("AUTH_HEADER_VALUE")
+	debug          = os.Getenv("DEBUG") != ""
 )
 
 var httpClient = &http.Client{
@@ -35,6 +36,32 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func debugLog(format string, args ...interface{}) {
+	if debug {
+		log.Printf("[DEBUG] "+format, args...)
+	}
+}
+
+func maskValue(v string) string {
+	if len(v) <= 8 {
+		return "***"
+	}
+	return v[:4] + "..." + v[len(v)-4:]
+}
+
+func logHeaders(prefix string, h http.Header) {
+	if !debug {
+		return
+	}
+	for k, vs := range h {
+		val := strings.Join(vs, ", ")
+		if strings.EqualFold(k, authHeaderName) || strings.EqualFold(k, "authorization") {
+			val = maskValue(val)
+		}
+		log.Printf("[DEBUG] %s header: %s: %s", prefix, k, val)
+	}
 }
 
 var hopByHopHeaders = map[string]bool{
@@ -81,15 +108,22 @@ func buildTargetURL(rawPath, rawQuery string) string {
 
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	start := time.Now()
 
 	rawPath := r.URL.RawPath
 	if rawPath == "" {
 		rawPath = r.URL.Path
 	}
 
+	debugLog(">>> %s %s (content-length: %d)", r.Method, rawPath, r.ContentLength)
+	if debug {
+		logHeaders("req-in", r.Header)
+	}
+
 	const maxBody = 50 << 20
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 	if err != nil {
+		debugLog("read body failed: %v", err)
 		http.Error(w, `{"error":"read_body_failed"}`, http.StatusBadGateway)
 		return
 	}
@@ -98,37 +132,57 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, buildTargetURL(rawPath, r.URL.RawQuery), bytes.NewReader(body))
+	targetURL := buildTargetURL(rawPath, r.URL.RawQuery)
+	debugLog("target: %s (body: %d bytes)", targetURL, len(body))
+
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytes.NewReader(body))
 	if err != nil {
+		debugLog("build request failed: %v", err)
 		http.Error(w, `{"error":"build_request_failed"}`, http.StatusBadGateway)
 		return
 	}
 
 	copyRequestHeaders(req, r)
 	req.Header.Set(authHeaderName, authHeaderVal)
+	if debug {
+		logHeaders("req-out", req.Header)
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		log.Printf("upstream error: %s %s -> %v", r.Method, rawPath, err)
+		log.Printf("upstream error: %s %s -> %v (%.0fms)", r.Method, rawPath, err, time.Since(start).Seconds()*1000)
 		http.Error(w, `{"error":"upstream_error"}`, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
+	debugLog("<<< %d %s (%.0fms)", resp.StatusCode, rawPath, time.Since(start).Seconds()*1000)
+	if debug {
+		logHeaders("resp", resp.Header)
+	}
+
 	copyResponseHeaders(w, resp)
-	w.WriteHeader(resp.StatusCode)
 
 	if resp.StatusCode >= 400 {
-		log.Printf("upstream %d: %s %s", resp.StatusCode, r.Method, rawPath)
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		log.Printf("upstream %d: %s %s (%.0fms) body: %s", resp.StatusCode, r.Method, rawPath, time.Since(start).Seconds()*1000, string(errBody))
+		w.WriteHeader(resp.StatusCode)
+		w.Write(errBody)
+		return
 	}
+
+	w.WriteHeader(resp.StatusCode)
 
 	if strings.Contains(rawPath, "response-stream") {
 		flusher, canFlush := w.(http.Flusher)
 		buf := make([]byte, 32*1024)
+		var totalBytes int64
 		for {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
+				totalBytes += int64(n)
 				if _, werr := w.Write(buf[:n]); werr != nil {
+					debugLog("stream write error after %d bytes: %v", totalBytes, werr)
 					break
 				}
 				if canFlush {
@@ -136,13 +190,18 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if err != nil {
+				if err != io.EOF {
+					debugLog("stream read error after %d bytes: %v", totalBytes, err)
+				}
 				break
 			}
 		}
+		debugLog("stream done: %s %s (%d bytes, %.0fms)", r.Method, rawPath, totalBytes, time.Since(start).Seconds()*1000)
 		return
 	}
 
-	io.Copy(w, resp.Body)
+	n, _ := io.Copy(w, resp.Body)
+	debugLog("response done: %s %s (%d bytes, %.0fms)", r.Method, rawPath, n, time.Since(start).Seconds()*1000)
 }
 
 func main() {
@@ -160,5 +219,9 @@ func main() {
 	}
 
 	log.Printf("Bedrock Auth Proxy on %s -> %s", listenAddr, upstreamURL.Host)
+	if debug {
+		log.Printf("[DEBUG] debug logging enabled")
+		log.Printf("[DEBUG] auth header: %s = %s", authHeaderName, maskValue(authHeaderVal))
+	}
 	log.Fatal(http.ListenAndServe(listenAddr, http.HandlerFunc(proxyHandler)))
 }
