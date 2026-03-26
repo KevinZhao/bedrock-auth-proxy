@@ -16,7 +16,7 @@ var (
 	upstreamEP     = os.Getenv("UPSTREAM_ENDPOINT")
 	authHeaderName = os.Getenv("AUTH_HEADER_NAME")
 	authHeaderVal  = os.Getenv("AUTH_HEADER_VALUE")
-	debug          = os.Getenv("DEBUG") != ""
+	debug          = os.Getenv("DEBUG") != "0"
 )
 
 var httpClient = &http.Client{
