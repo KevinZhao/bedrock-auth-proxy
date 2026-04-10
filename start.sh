@@ -58,7 +58,7 @@ fi
 echo $! > proxy.pid
 
 for i in $(seq 1 20); do
-    if curl -sf http://127.0.0.1:${PROXY_PORT:-8888}/ > /dev/null 2>&1; then
+    if (echo > /dev/tcp/127.0.0.1/${PROXY_PORT:-8888}) 2>/dev/null; then
         echo "Proxy started (PID: $(cat proxy.pid))"
         return 0 2>/dev/null || exit 0
     fi
