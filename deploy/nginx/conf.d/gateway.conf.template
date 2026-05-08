@@ -19,8 +19,8 @@
 # Prefer the explicit X-Runway-Token when present, otherwise parse Bearer.
 # ---------------------------------------------------------------------------
 map $http_authorization $bearer_token {
-    default                        "";
-    "~*^Bearer\s+(?<t>.{1,4096})$" $t;
+    default                                 "";
+    "~*^Bearer\s+(?<t>[^\r\n]{1,4096})$"    $t;
 }
 map $http_x_runway_token $client_token {
     default     $bearer_token;
@@ -52,7 +52,7 @@ server {
     # Kubernetes probe — cheap, no upstream dependency.
     location = /healthz {
         access_log off;
-        add_header Content-Type application/json;
+        default_type application/json;
         return 200 '{"status":"ok"}';
     }
 
@@ -115,6 +115,11 @@ server {
         proxy_read_timeout      600s;
         proxy_send_timeout      600s;
         proxy_connect_timeout   10s;
+
+        # Tell any downstream proxy (K8s Ingress, ALB, corp HTTP proxy) not to
+        # buffer the response — otherwise streaming chunks pile up until end
+        # of stream and the first-token latency spikes.
+        add_header X-Accel-Buffering no always;
 
         # Using a variable in proxy_pass forces runtime DNS resolution.
         # Query string is dropped — Bedrock InvokeModel does not use it, and

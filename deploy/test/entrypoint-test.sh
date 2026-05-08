@@ -109,6 +109,38 @@ assert_exit "AUTH_HEADER_NAME alnum+dash accepted" zero \
     -e 'AUTH_HEADER_NAME=X-Runway-Token'
 
 echo
+echo "-- UPSTREAM host/port/path injection surface --"
+assert_exit "UPSTREAM host with semicolon refused" nonzero \
+    -e 'UPSTREAM_ENDPOINT=https://evil;inject/' \
+    -e AUTH_HEADER_NAME=token
+assert_exit "UPSTREAM path with double-quote refused" nonzero \
+    -e 'UPSTREAM_ENDPOINT=https://ok/path";add_header evil' \
+    -e AUTH_HEADER_NAME=token
+assert_exit "UPSTREAM path with brace refused" nonzero \
+    -e 'UPSTREAM_ENDPOINT=https://ok/path}{injected' \
+    -e AUTH_HEADER_NAME=token
+assert_exit "UPSTREAM path with space refused" nonzero \
+    -e 'UPSTREAM_ENDPOINT=https://ok/path with space' \
+    -e AUTH_HEADER_NAME=token
+assert_exit "UPSTREAM port non-numeric refused" nonzero \
+    -e 'UPSTREAM_ENDPOINT=https://host:abc/' \
+    -e AUTH_HEADER_NAME=token
+assert_exit "LISTEN_PORT non-numeric refused" nonzero \
+    -e UPSTREAM_ENDPOINT=https://ok/ \
+    -e AUTH_HEADER_NAME=token \
+    -e 'LISTEN_PORT=80;worker_processes 99'
+assert_exit "LISTEN_PORT numeric accepted" zero \
+    -e UPSTREAM_ENDPOINT=https://ok/ \
+    -e AUTH_HEADER_NAME=token \
+    -e LISTEN_PORT=9090
+assert_exit "empty path (no trailing slash) accepted" zero \
+    -e UPSTREAM_ENDPOINT=https://host.example \
+    -e AUTH_HEADER_NAME=token
+assert_exit "deep path with hyphen/underscore accepted" zero \
+    -e UPSTREAM_ENDPOINT=https://host.example/a/b_c/d-e \
+    -e AUTH_HEADER_NAME=token
+
+echo
 echo "============================================================"
 if [ "$FAIL" -eq 0 ]; then
     color green; echo "ALL GREEN  passed=$PASS failed=0"; color reset

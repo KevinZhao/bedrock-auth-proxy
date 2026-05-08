@@ -51,6 +51,29 @@ fi
 path="${path%/}"
 
 # ---------------------------------------------------------------------------
+# Every value below is substituted verbatim into nginx.conf via envsubst, so
+# anything that could break out into a new directive (quotes, braces, semi-
+# colons, hashes, whitespace, backslashes, newlines) must be rejected here.
+# UPSTREAM_ENDPOINT is operator-provided, but Secrets/ConfigMaps can be wrong.
+# ---------------------------------------------------------------------------
+case "$host" in
+    *[!A-Za-z0-9._-]*|"")
+        echo "ERROR: UPSTREAM host '$host' contains invalid characters" >&2; exit 1 ;;
+esac
+case "$port" in
+    *[!0-9]*|"")
+        echo "ERROR: UPSTREAM port '$port' is not numeric" >&2; exit 1 ;;
+esac
+case "$path" in
+    *[!A-Za-z0-9/_.~-]*)
+        echo "ERROR: UPSTREAM base path '$path' contains invalid characters" >&2; exit 1 ;;
+esac
+case "${LISTEN_PORT:-}" in
+    *[!0-9]*|"")
+        echo "ERROR: LISTEN_PORT '$LISTEN_PORT' is not numeric" >&2; exit 1 ;;
+esac
+
+# ---------------------------------------------------------------------------
 # Resolve DNS servers at container start so `resolver` gets real IPs.
 # Prefer explicit DNS_RESOLVER env var, otherwise parse /etc/resolv.conf.
 # ---------------------------------------------------------------------------
