@@ -1,0 +1,132 @@
+# Rendered from template by docker-entrypoint.sh via envsubst.
+# Only `$${VAR}` placeholders below are substituted at container start;
+# anything written as `$var` is a real nginx runtime variable.
+#
+# Upstream path contract:
+#   incoming  /model/<id>/invoke                       (Bedrock InvokeModel)
+#   incoming  /model/<id>/invoke-with-response-stream  (Bedrock streaming)
+#   forwarded ${UPSTREAM_BASE_PATH}/model/invoke[-with-response-stream]
+# The model id itself travels in the request body.
+
+# Upstream host is resolved at request time via the `resolver` directive in
+# nginx.conf, so the container starts even if upstream DNS is temporarily
+# unreachable. A static `upstream {}` block would fail at startup instead.
+
+# ---------------------------------------------------------------------------
+# Token extraction — token may arrive in one of two headers depending on client:
+#   Claude Code  (ANTHROPIC_CUSTOM_HEADERS)           → X-Runway-Token: <token>
+#   Claude Cowork (inferenceCredentialHelper stdout)  → Authorization: Bearer <token>
+# Prefer the explicit X-Runway-Token when present, otherwise parse Bearer.
+# ---------------------------------------------------------------------------
+map $http_authorization $bearer_token {
+    default                        "";
+    "~*^Bearer\s+(?<t>.{1,4096})$" $t;
+}
+map $http_x_runway_token $client_token {
+    default     $bearer_token;
+    "~.+"       $http_x_runway_token;
+}
+
+# Sanitize client-supplied session id — forward only if it matches the expected
+# UUID-ish shape, otherwise drop. Prevents log injection and header smuggling
+# via attacker-controlled session id values.
+map $http_x_claude_code_session_id $safe_session_id {
+    default                 "";
+    "~^[A-Za-z0-9_-]{1,128}$" $http_x_claude_code_session_id;
+}
+
+# ---------------------------------------------------------------------------
+# Path rewrite — strip the Bedrock model id before forwarding.
+#   /model/<id>/invoke                      → ${UPSTREAM_BASE_PATH}/model/invoke
+#   /model/<id>/invoke-with-response-stream → ${UPSTREAM_BASE_PATH}/model/invoke-with-response-stream
+# ---------------------------------------------------------------------------
+map $uri $rewritten_path {
+    default                                                  "";
+    "~^/model/[^/]+/(?<op>invoke(-with-response-stream)?)$"  "${UPSTREAM_BASE_PATH}/model/$op";
+}
+
+server {
+    listen       ${LISTEN_PORT} default_server;
+    server_name  _;
+
+    # Kubernetes probe — cheap, no upstream dependency.
+    location = /healthz {
+        access_log off;
+        add_header Content-Type application/json;
+        return 200 '{"status":"ok"}';
+    }
+
+    # Static model list — keeps Claude Cowork / Claude Code model pickers happy
+    # without calling upstream. Curate this to whatever subset you sanction.
+    location = /v1/models {
+        access_log off;
+        default_type application/json;
+        return 200 '{"data":[{"id":"global.anthropic.claude-opus-4-6-v1","display_name":"Claude Opus 4.6","type":"model"},{"id":"global.anthropic.claude-sonnet-4-6","display_name":"Claude Sonnet 4.6","type":"model"},{"id":"global.anthropic.claude-haiku-4-5-20251001-v1:0","display_name":"Claude Haiku 4.5","type":"model"}],"has_more":false}';
+    }
+
+    # count_tokens is intentionally not proxied — clients fall back to local
+    # estimation. Remove this location if upstream gains support.
+    location = /v1/messages/count_tokens {
+        access_log off;
+        default_type application/json;
+        return 501 '{"type":"error","error":{"type":"not_implemented","message":"count_tokens not supported by this gateway"}}';
+    }
+
+    # -----------------------------------------------------------------------
+    # Primary Bedrock pass-through.
+    # Matches POST /model/<model-id>/invoke[-with-response-stream].
+    # -----------------------------------------------------------------------
+    location ~ ^/model/[^/]+/invoke(-with-response-stream)?$ {
+        if ($request_method != POST) {
+            return 405 '{"type":"error","error":{"type":"method_not_allowed","message":"only POST is allowed"}}';
+        }
+        if ($rewritten_path = "") {
+            return 400 '{"type":"error","error":{"type":"invalid_request_error","message":"unable to rewrite path"}}';
+        }
+        if ($client_token = "") {
+            return 401 '{"type":"error","error":{"type":"authentication_error","message":"missing auth token (set ANTHROPIC_CUSTOM_HEADERS=\"X-Runway-Token: <token>\" for Claude Code, or configure inferenceCredentialHelper for Claude Cowork)"}}';
+        }
+
+        # Scrub any client-supplied AWS / auth headers; we're about to replace
+        # them with the upstream-specific header below.
+        proxy_set_header Authorization        "";
+        proxy_set_header X-Amz-Date           "";
+        proxy_set_header X-Amz-Security-Token "";
+        proxy_set_header X-Amz-Content-Sha256 "";
+        proxy_set_header X-Amzn-Trace-Id      "";
+        proxy_set_header X-Runway-Token       "";
+
+        # Preserve diagnostic headers so upstream logs can join on session id.
+        # Sanitized via $safe_session_id — see map above.
+        proxy_set_header X-Claude-Code-Session-Id $safe_session_id;
+
+        # Inject upstream auth header (AUTH_HEADER_NAME is substituted at
+        # container start; the value comes from each user's own token).
+        proxy_set_header ${AUTH_HEADER_NAME} $client_token;
+
+        # Host header — some upstreams validate SNI/Host.
+        proxy_set_header Host ${UPSTREAM_HOST};
+
+        # Streaming-friendly settings — Bedrock response-stream requires these.
+        proxy_http_version      1.1;
+        proxy_set_header        Connection "";
+        proxy_buffering         off;
+        proxy_request_buffering off;
+        proxy_read_timeout      600s;
+        proxy_send_timeout      600s;
+        proxy_connect_timeout   10s;
+
+        # Using a variable in proxy_pass forces runtime DNS resolution.
+        # Query string is dropped — Bedrock InvokeModel does not use it, and
+        # forwarding client-controlled $args could pollute upstream routing.
+        set $upstream_target "${UPSTREAM_SCHEME}://${UPSTREAM_HOST}:${UPSTREAM_PORT}";
+        proxy_pass $upstream_target$rewritten_path;
+    }
+
+    # Explicit fallback — surface misconfiguration instead of silent 404 HTML.
+    location / {
+        access_log off;
+        default_type application/json;
+        return 404 '{"type":"error","error":{"type":"not_found","message":"route not implemented by this gateway"}}';
+    }
+}

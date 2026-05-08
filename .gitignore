@@ -1,3 +1,7 @@
 bedrock-auth-proxy
 proxy.log
 proxy.pid
+
+# Local AI tool metadata — not intended for the repo.
+.naozhi/
+CLAUDE.md
