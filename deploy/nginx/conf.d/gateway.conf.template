@@ -127,6 +127,16 @@ server {
         # Host header — some upstreams validate SNI/Host.
         proxy_set_header Host ${UPSTREAM_HOST};
 
+        # Force-advertise gzip support to the upstream.
+        # Empirically the upstream (Runway) only keeps streaming responses
+        # alive past its 25s idle window when the client claims to accept
+        # compressed encodings; without this header, EventStream payloads
+        # get truncated mid-frame at ~25s and Claude Code falls back to
+        # non-streaming. The Anthropic Bedrock SDK runs on undici, which
+        # transparently decodes gzip/deflate/br response bodies before the
+        # stream parser sees them, so this is safe end-to-end.
+        proxy_set_header Accept-Encoding "gzip, deflate, br";
+
         # Streaming-friendly settings — Bedrock response-stream requires these.
         proxy_http_version      1.1;
         proxy_set_header        Connection "";
