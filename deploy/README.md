@@ -106,6 +106,51 @@ inferenceModels              = [ "global.anthropic.claude-opus-4-6-v1", ... ]
 This image listens on plain HTTP. TLS termination belongs in the layer in front
 (Ingress, ALB, NLB-with-ACM). K8s manifests live at `../k8s/` (forthcoming).
 
+## Diagnostics
+
+Access log is a single-line JSON record per request, written to stdout. Useful
+fields when triaging streaming / fallback issues:
+
+| Field                     | Meaning                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| `request_id`              | nginx-generated id; forwarded as `X-Request-Id` to upstream — use to correlate logs |
+| `is_stream`               | `"1"` = `/invoke-with-response-stream`; `"0"` = unary `/invoke` or other path       |
+| `auth_present`            | `"1"` = a token header was extracted; `"0"` = client misconfig (caused the 401)     |
+| `req_ms`                  | Total wall-clock time client → nginx → upstream → client                            |
+| `upstream_connect_ms`     | TCP+TLS handshake to upstream                                                      |
+| `upstream_header_ms`      | First-byte latency from upstream (≈ time-to-first-token for streaming)             |
+| `upstream_ms`             | Time until upstream finished sending body (= stream close time when streaming)     |
+| `upstream_bytes_received` | Bytes nginx read from upstream — for truncated streams, the actual payload size   |
+| `request_completion`      | `"OK"` = full body delivered; `""` = aborted (client dropped or upstream RST)       |
+| `connection`              | nginx TCP connection serial; pair with `connection_requests` to find the same conn |
+
+### Triaging the streaming → non-streaming fallback (Claude Code)
+
+If a Claude Code client reports `Error streaming, falling back to non-streaming
+mode`, find the matching access-log record:
+
+```bash
+kubectl logs <gateway-pod> --since=10m \
+  | jq 'select(.is_stream=="1") | select(.req_ms | tonumber > 10)'
+```
+
+Common signatures:
+
+| Symptom in access log                                                  | Likely cause                                |
+| ---------------------------------------------------------------------- | ------------------------------------------- |
+| `req_ms ≈ 25`, `request_completion=""`, `upstream_bytes_received` >0   | Upstream RST mid-stream (idle-timeout cut)  |
+| `req_ms ≈ 25`, `upstream_status="504"`                                 | Upstream gateway timeout                    |
+| `req_ms ≈ 25`, `upstream_status="200"`, `upstream_bytes_received` <500 | Upstream returned 200 but empty body        |
+| `upstream_status="499"`                                                | Client gave up first (Claude Code watchdog) |
+
+When a fixed `req_ms` value (e.g. ~25s) repeats across many requests, that
+value is the *upstream* idle timeout — not anything in this image. The fix
+must happen on the upstream side.
+
+If you also need errno-level detail (`recv() failed`, `upstream prematurely
+closed connection`), set `LOG_LEVEL=info` in the Deployment env. Volume is
+modest at info; do not use `debug` outside one-off investigations.
+
 ## Security notes
 
 - Runs as non-root (`USER nginx`); all runtime paths under `/tmp`

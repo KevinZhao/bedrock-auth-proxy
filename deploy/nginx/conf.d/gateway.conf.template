@@ -35,6 +35,22 @@ map $http_x_claude_code_session_id $safe_session_id {
     "~^[A-Za-z0-9_-]{1,128}$" $http_x_claude_code_session_id;
 }
 
+# Tag streaming vs unary in access log — lets ops `jq 'select(.is_stream=="1")'`
+# without having to regex on $uri. Matches the same suffix the location regex
+# uses below.
+map $uri $is_stream {
+    default                                       "0";
+    "~^/model/[^/]+/invoke-with-response-stream$" "1";
+}
+
+# Record whether ANY auth header was present (regardless of which one). Never
+# logs the actual token — just "1"/"0". Useful for distinguishing "client
+# misconfig" (auth_present=0 → 401) from real upstream failures.
+map $client_token $auth_present {
+    default     "0";
+    "~.+"       "1";
+}
+
 # ---------------------------------------------------------------------------
 # Path rewrite — strip the Bedrock model id before forwarding.
 #   /model/<id>/invoke                      → ${UPSTREAM_BASE_PATH}/model/invoke
@@ -99,6 +115,10 @@ server {
         # Preserve diagnostic headers so upstream logs can join on session id.
         # Sanitized via $safe_session_id — see map above.
         proxy_set_header X-Claude-Code-Session-Id $safe_session_id;
+
+        # Forward the nginx-generated request id so upstream logs can be
+        # correlated with our access log via the request_id field.
+        proxy_set_header X-Request-Id $request_id;
 
         # Inject upstream auth header (AUTH_HEADER_NAME is substituted at
         # container start; the value comes from each user's own token).
