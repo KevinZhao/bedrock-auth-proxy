@@ -127,15 +127,23 @@ server {
         # Host header — some upstreams validate SNI/Host.
         proxy_set_header Host ${UPSTREAM_HOST};
 
-        # Force-advertise gzip support to the upstream.
-        # Empirically the upstream (Runway) only keeps streaming responses
-        # alive past its 25s idle window when the client claims to accept
-        # compressed encodings; without this header, EventStream payloads
-        # get truncated mid-frame at ~25s and Claude Code falls back to
-        # non-streaming. The Anthropic Bedrock SDK runs on undici, which
-        # transparently decodes gzip/deflate/br response bodies before the
-        # stream parser sees them, so this is safe end-to-end.
-        proxy_set_header Accept-Encoding "gzip, deflate, br";
+        # Strip Accept-Encoding before forwarding to upstream.
+        # The upstream (Runway / its LB) compresses the AWS EventStream
+        # binary response when the request advertises gzip/deflate/br
+        # support, but the Anthropic Bedrock SDK's EventStream parser does
+        # NOT decompress before parsing — it tries to read gzip/brotli
+        # bytes as a frame header and dies with "Truncated event message
+        # received". Node's undici only auto-decompresses for fetch()
+        # consumers; the SDK reads the raw response body directly into
+        # the EventStream codec, so no transparent decode happens.
+        # Empirical proof: an identical curl with no Accept-Encoding
+        # returns 270 KB of EventStream and parses cleanly; with
+        # Accept-Encoding: gzip,deflate,br it returns 19.5 KB of br/gzip
+        # payload that the SDK can't read.
+        # Setting an empty value here removes the header entirely (nginx
+        # proxy_set_header semantic), so the upstream falls back to
+        # identity encoding regardless of what the client sent.
+        proxy_set_header Accept-Encoding "";
 
         # Streaming-friendly settings — Bedrock response-stream requires these.
         proxy_http_version      1.1;

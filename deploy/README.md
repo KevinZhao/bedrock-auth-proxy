@@ -123,11 +123,14 @@ fields when triaging streaming / fallback issues:
 | `upstream_bytes_received` | Bytes nginx read from upstream — for truncated streams, the actual payload size   |
 | `request_completion`      | `"OK"` = full body delivered; `""` = aborted (client dropped or upstream RST)       |
 | `connection`              | nginx TCP connection serial; pair with `connection_requests` to find the same conn |
+| `client_accept_encoding`  | What the client advertised — should be empty here because the gateway strips it     |
+| `upstream_content_encoding` | What the upstream actually returned — must be empty/identity for EventStream      |
+| `upstream_content_type`   | Should be `application/vnd.amazon.eventstream` for streaming requests              |
 
 ### Triaging the streaming → non-streaming fallback (Claude Code)
 
 If a Claude Code client reports `Error streaming, falling back to non-streaming
-mode`, find the matching access-log record:
+mode` or `Truncated event message received`, find the matching access-log record:
 
 ```bash
 kubectl logs <gateway-pod> --since=10m \
@@ -138,14 +141,18 @@ Common signatures:
 
 | Symptom in access log                                                  | Likely cause                                |
 | ---------------------------------------------------------------------- | ------------------------------------------- |
+| `upstream_content_encoding` is `gzip`/`br`/`deflate`                   | Gateway is not stripping `Accept-Encoding` — verify the streaming location config |
 | `req_ms ≈ 25`, `request_completion=""`, `upstream_bytes_received` >0   | Upstream RST mid-stream (idle-timeout cut)  |
 | `req_ms ≈ 25`, `upstream_status="504"`                                 | Upstream gateway timeout                    |
 | `req_ms ≈ 25`, `upstream_status="200"`, `upstream_bytes_received` <500 | Upstream returned 200 but empty body        |
 | `upstream_status="499"`                                                | Client gave up first (Claude Code watchdog) |
 
-When a fixed `req_ms` value (e.g. ~25s) repeats across many requests, that
-value is the *upstream* idle timeout — not anything in this image. The fix
-must happen on the upstream side.
+The most common cause of `Truncated event message received` is the upstream
+compressing the AWS EventStream binary response. The Anthropic Bedrock SDK's
+EventStream parser cannot decompress before parsing, so any non-identity
+`Content-Encoding` will look like a malformed frame header. This image strips
+`Accept-Encoding` from every proxied request to force `Content-Encoding:
+identity` from the upstream.
 
 If you also need errno-level detail (`recv() failed`, `upstream prematurely
 closed connection`), set `LOG_LEVEL=info` in the Deployment env. Volume is
