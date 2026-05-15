@@ -106,58 +106,6 @@ inferenceModels              = [ "global.anthropic.claude-opus-4-6-v1", ... ]
 This image listens on plain HTTP. TLS termination belongs in the layer in front
 (Ingress, ALB, NLB-with-ACM). K8s manifests live at `../k8s/` (forthcoming).
 
-## Diagnostics
-
-Access log is a single-line JSON record per request, written to stdout. Useful
-fields when triaging streaming / fallback issues:
-
-| Field                     | Meaning                                                                            |
-| ------------------------- | ---------------------------------------------------------------------------------- |
-| `request_id`              | nginx-generated id; forwarded as `X-Request-Id` to upstream — use to correlate logs |
-| `is_stream`               | `"1"` = `/invoke-with-response-stream`; `"0"` = unary `/invoke` or other path       |
-| `auth_present`            | `"1"` = a token header was extracted; `"0"` = client misconfig (caused the 401)     |
-| `req_ms`                  | Total wall-clock time client → nginx → upstream → client                            |
-| `upstream_connect_ms`     | TCP+TLS handshake to upstream                                                      |
-| `upstream_header_ms`      | First-byte latency from upstream (≈ time-to-first-token for streaming)             |
-| `upstream_ms`             | Time until upstream finished sending body (= stream close time when streaming)     |
-| `upstream_bytes_received` | Bytes nginx read from upstream — for truncated streams, the actual payload size   |
-| `request_completion`      | `"OK"` = full body delivered; `""` = aborted (client dropped or upstream RST)       |
-| `connection`              | nginx TCP connection serial; pair with `connection_requests` to find the same conn |
-| `client_accept_encoding`  | What the client advertised — should be empty here because the gateway strips it     |
-| `upstream_content_encoding` | What the upstream actually returned — must be empty/identity for EventStream      |
-| `upstream_content_type`   | Should be `application/vnd.amazon.eventstream` for streaming requests              |
-
-### Triaging the streaming → non-streaming fallback (Claude Code)
-
-If a Claude Code client reports `Error streaming, falling back to non-streaming
-mode` or `Truncated event message received`, find the matching access-log record:
-
-```bash
-kubectl logs <gateway-pod> --since=10m \
-  | jq 'select(.is_stream=="1") | select(.req_ms | tonumber > 10)'
-```
-
-Common signatures:
-
-| Symptom in access log                                                  | Likely cause                                |
-| ---------------------------------------------------------------------- | ------------------------------------------- |
-| `upstream_content_encoding` is `gzip`/`br`/`deflate`                   | Gateway is not stripping `Accept-Encoding` — verify the streaming location config |
-| `req_ms ≈ 25`, `request_completion=""`, `upstream_bytes_received` >0   | Upstream RST mid-stream (idle-timeout cut)  |
-| `req_ms ≈ 25`, `upstream_status="504"`                                 | Upstream gateway timeout                    |
-| `req_ms ≈ 25`, `upstream_status="200"`, `upstream_bytes_received` <500 | Upstream returned 200 but empty body        |
-| `upstream_status="499"`                                                | Client gave up first (Claude Code watchdog) |
-
-The most common cause of `Truncated event message received` is the upstream
-compressing the AWS EventStream binary response. The Anthropic Bedrock SDK's
-EventStream parser cannot decompress before parsing, so any non-identity
-`Content-Encoding` will look like a malformed frame header. This image strips
-`Accept-Encoding` from every proxied request to force `Content-Encoding:
-identity` from the upstream.
-
-If you also need errno-level detail (`recv() failed`, `upstream prematurely
-closed connection`), set `LOG_LEVEL=info` in the Deployment env. Volume is
-modest at info; do not use `debug` outside one-off investigations.
-
 ## Security notes
 
 - Runs as non-root (`USER nginx`); all runtime paths under `/tmp`
